@@ -59,10 +59,28 @@ async def run_agent(
     next step. The loop ends when the model stops asking for tools
     (`"completed"`), when `max_steps` is exhausted (`"max_steps"`), or when a
     model request fails outright (`"failed"`).
+
+    The loop is deliberately written as a short sequence of visible steps:
+
+    1. Reject a non-positive `max_steps` immediately rather than silently
+       running zero iterations.
+    2. Start the transcript with the user's task. This same list is appended
+       to, sent with every model request, and returned in `RunResult.messages`.
+    3. On each step, request a model turn and convert a `ModelError` into a
+       failed result instead of leaking it from the Agent boundary.
+    4. Append the assistant turn, including any proposed tool calls. If there
+       are no tool calls, the run is complete.
+    5. Dispatch every proposed tool call and append one matching tool-result
+       message for each call, whether the tool succeeded or failed. Leaving a
+       dangling tool call would make the next model request malformed.
+    6. If the final allowed step still asks for tools, return `"max_steps"`.
     """
+    # Fail fast on a caller error instead of silently doing no work.
     if max_steps <= 0:
         raise ValueError(f"max_steps must be positive, got {max_steps}")
 
+    # This is both the live conversation sent to the model and the transcript
+    # returned to the caller for inspection.
     messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
 
     for step in range(max_steps):
@@ -86,6 +104,8 @@ async def run_agent(
             result = await dispatch(registry, call)
             trace_output = result.error if result.error is not None else result.output
             on_event(f"[step {step}] tool {call.name} -> {trace_output[:200]!r}")
+            # Every assistant tool_call must have a matching tool message,
+            # including failures, before the conversation can continue.
             messages.append(to_tool_message(call.id, trace_output))
 
         if step + 1 == max_steps:

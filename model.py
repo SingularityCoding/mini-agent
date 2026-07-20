@@ -57,7 +57,36 @@ async def request(
 
     Raises ModelError for any network failure, non-2xx status, invalid JSON
     body, or response body missing required fields.
+
+    A response body looks like this (only the fields used here are shown):
+
+        {
+          "choices": [
+            {
+              "message": {
+                "content": null,
+                "tool_calls": [
+                  {
+                    "id": "call_abc123",
+                    "type": "function",
+                    "function": {
+                      "name": "read_file",
+                      "arguments": "{\\"path\\": \\"main.py\\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": "tool_calls"
+            }
+          ]
+        }
+
+    `function.arguments` is a JSON-encoded string rather than an object, so it
+    crosses a second parsing boundary and must be decoded with `json.loads`.
+    A plain-text reply has no `tool_calls` (or has `null`) and its `content` is
+    a string.
     """
+    # Build the wire request, omitting `tools` entirely when it is empty.
     url = f"{settings.base_url.rstrip('/')}/chat/completions"
     headers = {"Authorization": f"Bearer {settings.api_key.get_secret_value()}"}
     body: dict[str, Any] = {
@@ -68,6 +97,8 @@ async def request(
     if tools:
         body["tools"] = tools
 
+    # Convert transport failures at the Model boundary; callers should not
+    # need to know that this implementation happens to use httpx.
     try:
         async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
             http_response = await client.post(url, headers=headers, json=body)
@@ -79,6 +110,8 @@ async def request(
             f"model request returned HTTP {http_response.status_code}: {http_response.text}"
         )
 
+    # JSON decoding and shape validation are also boundary concerns. Both are
+    # normalized to ModelError instead of leaking wire-level exceptions.
     try:
         payload = http_response.json()
     except json.JSONDecodeError as exc:
@@ -98,6 +131,7 @@ async def request(
 
     tool_calls: list[ToolCall] = []
     for raw_call in message.get("tool_calls") or []:
+        # The API nests arguments as JSON text inside the outer JSON response.
         try:
             call_id = raw_call["id"]
             function = raw_call["function"]
@@ -127,6 +161,10 @@ def to_assistant_message(response: ModelResponse) -> dict[str, Any]:
 
     Used by the Agent Loop to feed a completed turn back into `messages` for
     the next request.
+
+    The base shape is `{"role": "assistant", "content": ...}`. A
+    `tool_calls` key is included only when calls are present, with each
+    argument dict encoded back into the wire format's JSON string.
     """
     message: dict[str, Any] = {"role": "assistant", "content": response.content}
     if response.tool_calls:
@@ -142,5 +180,5 @@ def to_assistant_message(response: ModelResponse) -> dict[str, Any]:
 
 
 def to_tool_message(call_id: str, output: str) -> dict[str, Any]:
-    """Serialize a tool's output into a wire-format tool result message."""
+    """Serialize output as a `tool` message matched by `tool_call_id`."""
     return {"role": "tool", "tool_call_id": call_id, "content": output}

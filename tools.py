@@ -42,11 +42,13 @@ class ToolRegistry:
             self.register(tool)
 
     def register(self, tool: Tool) -> None:
+        """Register `tool`, rejecting duplicate names rather than replacing one."""
         if tool.name in self._tools:
             raise ValueError(f"tool already registered: {tool.name}")
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool | None:
+        """Return the named tool, or `None` when it is not registered."""
         return self._tools.get(name)
 
     def specs(self) -> list[dict[str, Any]]:
@@ -55,6 +57,10 @@ class ToolRegistry:
         Only the name, description, and JSON Schema parameters are sent to the
         model -- never the Python handler. The model can only ever propose a
         call by name and arguments; it has no access to the code that runs.
+
+        Each entry uses the OpenAI-compatible function-tool shape:
+        `{"type": "function", "function": {"name": ..., "description": ...,
+        "parameters": ...}}`.
         """
         return [
             {
@@ -80,12 +86,18 @@ async def dispatch(
 ) -> ToolResult:
     """Validate and execute a single tool call -- the only place a handler runs.
 
-    Distinguishes three failure modes so a Harness can react to each
-    differently: an unknown tool name, arguments that fail the (lightweight)
-    schema check, and a handler that raised or ran too long. In every failure
-    case the handler is either never called or its exception is caught here --
-    nothing about tool execution should escape as a raw Python exception.
+    Distinguishes four outcomes so a Harness can react to each differently:
+
+    - `unknown_tool`: the name is not registered; no handler runs.
+    - `invalid_arguments`: a required argument is missing; no handler runs.
+    - `handler_error` / `tool_timeout`: execution failed or exceeded its bound.
+    - success: the handler's return value is normalized to a string.
+
+    Handler exceptions are caught at this boundary, but `CancelledError` is
+    deliberately allowed through so cancelling the whole agent remains
+    possible.
     """
+    # Resolve the proposed name before touching a handler.
     tool = registry.get(call.name)
     if tool is None:
         return ToolResult(output="", error=f"unknown_tool: {call.name}")
@@ -97,6 +109,8 @@ async def dispatch(
     if missing:
         return ToolResult(output="", error=f"invalid_arguments: missing {missing}")
 
+    # Adapt synchronous handlers to the async boundary, then apply the same
+    # timeout and error normalization to both sync and async implementations.
     try:
         if inspect.iscoroutinefunction(tool.handler):
             coro = tool.handler(**call.arguments)
@@ -131,6 +145,7 @@ def _resolve_confined(path: str) -> Path | str:
 
 
 def read_file(path: str) -> str:
+    """Return a confined file's text, or an `error:` string for expected failures."""
     resolved = _resolve_confined(path)
     if isinstance(resolved, str):
         return resolved
@@ -145,6 +160,7 @@ def read_file(path: str) -> str:
 
 
 def list_files(path: str = ".") -> str:
+    """List a confined directory non-recursively, sorted with `/` on directories."""
     resolved = _resolve_confined(path)
     if isinstance(resolved, str):
         return resolved
@@ -157,6 +173,12 @@ def list_files(path: str = ".") -> str:
 
 
 def edit_file(path: str, old_str: str, new_str: str) -> str:
+    """Create a new file or replace exactly one matching string in an existing file.
+
+    An empty `old_str` means creation and is accepted only when the target does
+    not exist. Edits require exactly one match so the tool never guesses which
+    occurrence the model intended.
+    """
     resolved = _resolve_confined(path)
     if isinstance(resolved, str):
         return resolved
@@ -182,6 +204,8 @@ def edit_file(path: str, old_str: str, new_str: str) -> str:
     return f"edited {path}"
 
 
+# The three builtin handlers are paired with the JSON Schemas shown to the
+# model. Their Python callables themselves never cross the Model boundary.
 BUILTIN_TOOLS: list[Tool] = [
     Tool(
         name="read_file",
