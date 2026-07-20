@@ -1,4 +1,8 @@
-# mini-agent
+# mini-agent (reference)
+
+> This is the `reference` branch: a complete, working implementation. If you're doing
+> the exercise, go build it yourself on `main` first -- see that branch's README. Come
+> back here to compare once you have something working (or are genuinely stuck).
 
 A from-scratch, teaching-scale coding agent: Model boundary + Tool boundary + a bounded
 Agent Loop. No streaming, no TUI, no Skills/MCP, no Hooks, no approval system, no pytest
