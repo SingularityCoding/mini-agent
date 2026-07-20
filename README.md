@@ -39,8 +39,12 @@ uv sync
 
 ## Verifying your work
 
-There's no test suite here on purpose. Run it against a real task and watch what
-happens:
+There's no test suite here on purpose. As you finish each file, run the matching
+check script -- `uv run scripts/check_model.py` after `model.py`, `uv run
+scripts/check_tools.py` after `tools.py` -- to check that one piece in isolation
+before wiring it into the full loop. These are given as-is, same as `main.py`.
+
+Once `agent.py` is done, run it against a real task and watch what happens:
 
 ```bash
 uv run main.py "read main.py and tell me what this project does"

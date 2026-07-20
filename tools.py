@@ -71,27 +71,38 @@ async def dispatch(
 ) -> ToolResult:
     """Validate and execute a single tool call -- the only place a handler runs.
 
-    Must distinguish three failure modes so a caller can react to each
-    differently:
+    Must cleanly tell apart four outcomes; the first three all short-circuit
+    before the handler ever runs:
 
-    TODO:
-    - unknown tool: registry.get(call.name) is None -> ToolResult(output="",
-      error=f"unknown_tool: {call.name}"). The handler must NOT be called.
-    - invalid arguments: a lightweight required-field check (every name in
-      tool.parameters.get("required", []) must be a key in call.arguments; a
-      full JSON Schema validator is out of scope) -> ToolResult(output="",
-      error=f"invalid_arguments: missing {missing_names}"). The handler must
-      NOT be called.
-    - handler exception / timeout: the handler raised, or ran past
-      timeout_seconds -> ToolResult(output="", error="handler_error: ...") or
-      ToolResult(output="", error="tool_timeout: ..."). asyncio.CancelledError
-      must always re-raise, never be caught as an error result.
-    - success -> ToolResult(output=<the handler's return value, as a str>).
+        unknown_tool      -- ToolResult(output="", error=f"unknown_tool: {call.name}")
+        invalid_arguments -- ToolResult(output="", error=f"invalid_arguments: missing {missing}")
+        handler_error /
+        tool_timeout       -- ToolResult(output="", error="handler_error: ...")
+                              or ToolResult(output="", error="tool_timeout: ...")
+        success            -- ToolResult(output=<handler's return value, as a str>)
 
-    Also: adapt sync handlers to this async boundary. If
-    inspect.iscoroutinefunction(tool.handler), await it directly; otherwise run
-    it via asyncio.to_thread(tool.handler, **call.arguments) so a blocking
-    file/subprocess call doesn't stall the event loop.
+    # Step 1: look the tool up. tool = registry.get(call.name); if it's None,
+    #   return the unknown_tool ToolResult immediately -- do not call anything.
+
+    # Step 2: check required arguments. missing = [name for name in
+    #   tool.parameters.get("required", []) if name not in call.arguments].
+    #   If missing is non-empty, return the invalid_arguments ToolResult
+    #   immediately -- do not call the handler. (A full JSON Schema validator
+    #   is out of scope; this required-field check is enough here.)
+
+    # Step 3: run the handler, adapting sync handlers to this async boundary:
+    #   if inspect.iscoroutinefunction(tool.handler): await tool.handler(**call.arguments)
+    #   else: await asyncio.to_thread(tool.handler, **call.arguments)
+    #   -- a blocking sync call (file I/O) must not run directly on the event
+    #   loop, it would stall every other concurrent task.
+
+    # Step 4: bound Step 3 with asyncio.timeout(timeout_seconds) (or
+    #   asyncio.wait_for). Catch TimeoutError -> the tool_timeout ToolResult.
+    #   Catch any other Exception -> the handler_error ToolResult, with str(exc)
+    #   folded into the message. Do NOT catch asyncio.CancelledError here --
+    #   let it propagate; swallowing it would make the whole run un-cancellable.
+
+    # Step 5: on success, return ToolResult(output=str(<handler's return value>)).
     """
     raise NotImplementedError
 

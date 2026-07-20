@@ -54,24 +54,46 @@ async def run_agent(
 ) -> RunResult:
     """Run the bounded Agent Loop for `task` and return a `RunResult`.
 
-    TODO, roughly in this order:
-    - Validate max_steps is a positive int (raise ValueError otherwise).
-    - messages = [{"role": "user", "content": task}].
-    - for step in range(max_steps):
-        - call request(settings, messages, tools=registry.specs()); a
-          ModelError should become RunResult(status="failed", output=None,
-          error=str(exc), messages=messages) -- don't let it escape run_agent.
-        - append to_assistant_message(response) to messages.
-        - if response.tool_calls is empty: the model is done -- return
-          RunResult(status="completed", output=response.content or "",
-          error=None, messages=messages).
-        - otherwise, for each call: dispatch(registry, call), then append
-          to_tool_message(call.id, result.error if result.error is not None
-          else result.output) to messages.
-        - if this was the last allowed step, return RunResult(status="max_steps",
-          output=None, error=None, messages=messages).
-    - Call on_event(...) with a short trace line before/after the interesting
-      steps above (which model call, which tool call, what it returned) -- there
-      is no TUI here, on_event is the only observability you get.
+    Three ways this can end, and only three: the model stops asking for
+    tools (`"completed"`), the loop hits `max_steps` without that happening
+    (`"max_steps"`), or a model request itself fails (`"failed"`).
+
+    # Step 0: if max_steps is not a positive int, raise ValueError -- fail
+    #   fast on a caller mistake rather than silently looping zero times.
+
+    # Step 1: messages = [{"role": "user", "content": task}] -- this list is
+    #   what you append to and pass to every request() call; it's also what
+    #   ends up in the returned RunResult.messages.
+
+    # Step 2: for step in range(max_steps):
+    #
+    #   2a. on_event(f"step {step}: requesting model"), then:
+    #       try: response = await request(settings, messages, tools=registry.specs())
+    #       except ModelError as exc: return RunResult(status="failed", output=None,
+    #       error=str(exc), messages=messages) -- do not let ModelError escape
+    #       run_agent itself.
+    #
+    #   2b. messages.append(to_assistant_message(response)) -- the model's turn
+    #       (including any tool_calls it asked for) is now part of the transcript,
+    #       same as it would be sent back on the next request.
+    #
+    #   2c. if not response.tool_calls: the model is done talking -- on_event(...),
+    #       return RunResult(status="completed", output=response.content or "",
+    #       error=None, messages=messages).
+    #
+    #   2d. otherwise, for call in response.tool_calls:
+    #       on_event(f"  calling {call.name}({call.arguments})")
+    #       result = await dispatch(registry, call)
+    #       on_event(f"  -> {result}")
+    #       messages.append(to_tool_message(
+    #           call.id, result.error if result.error is not None else result.output
+    #       ))
+    #       -- every tool_call the model asked for needs a matching tool
+    #       message appended, success or error, or the next request will be
+    #       malformed (a dangling tool_call with no result).
+    #
+    #   2e. if step is the last one in range(max_steps) and you got here (the
+    #       model still wanted more tool calls), return RunResult(status="max_steps",
+    #       output=None, error=None, messages=messages).
     """
     raise NotImplementedError
