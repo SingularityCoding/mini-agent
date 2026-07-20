@@ -1,15 +1,23 @@
-"""CLI entry point. Given to students as-is -- argument parsing isn't the lesson.
+"""CLI entry point. Given to you as-is -- argument parsing isn't the lesson.
 
 Usage:
     uv run main.py "read main.py and tell me what it does"
+    uv run main.py "list the files in this project" --max-steps 5
+
+This will raise NotImplementedError until you've filled in model.py, tools.py, and
+agent.py. That's expected -- watch the error move as you finish each piece.
 """
 
 from __future__ import annotations
 
-import argparse
+import asyncio
 import sys
 
+import argparse
+
+from agent import run_agent
 from settings import load_settings
+from tools import BUILTIN_TOOLS, ToolRegistry
 
 
 def main() -> None:
@@ -19,11 +27,20 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = load_settings()
+    registry = ToolRegistry(BUILTIN_TOOLS)
 
-    # Batch 4 will replace this with a call into agent.run_agent(...).
-    print(f"[mini-agent] would run task {args.task!r} against {settings.default_model!r}")
-    print("[mini-agent] agent loop not implemented yet")
-    sys.exit(1)
+    result = asyncio.run(run_agent(settings, args.task, registry, max_steps=args.max_steps))
+
+    print("=== RESULT ===")
+    print(f"status: {result.status}")
+    if result.status == "completed":
+        print(result.output)
+    elif result.status == "failed":
+        print(f"error: {result.error}")
+        sys.exit(1)
+    else:
+        print(f"ran out of steps ({args.max_steps}) without finishing")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
