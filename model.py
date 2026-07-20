@@ -69,7 +69,11 @@ async def request(
         body["tools"] = tools
 
     try:
-        async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
+        # trust_env=False: don't let a machine's ambient HTTP(S)/SOCKS proxy env vars
+        # redirect this request -- we're always talking directly to the course proxy.
+        async with httpx.AsyncClient(
+            timeout=settings.request_timeout_seconds, trust_env=False
+        ) as client:
             http_response = await client.post(url, headers=headers, json=body)
     except httpx.HTTPError as exc:
         raise ModelError(f"request to model failed: {exc!r}") from exc
