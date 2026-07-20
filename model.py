@@ -59,7 +59,7 @@ async def request(
     body, or response body missing required fields.
     """
     url = f"{settings.base_url.rstrip('/')}/chat/completions"
-    headers = {"Authorization": f"Bearer {settings.api_key}"}
+    headers = {"Authorization": f"Bearer {settings.api_key.get_secret_value()}"}
     body: dict[str, Any] = {
         "model": settings.default_model,
         "messages": messages,

@@ -2,39 +2,39 @@
 
 This file is given to students as-is. Reading a few environment variables isn't
 part of the lesson -- the Model boundary is.
+
+Uses Pydantic Settings, matching the real Phi's settings.py: environment
+configuration is untrusted input, and Pydantic is the right tool at that
+parsing boundary -- a plain dataclass wouldn't validate or coerce anything.
 """
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
-
-from dotenv import load_dotenv
-
-load_dotenv()
+from pydantic import SecretStr, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-@dataclass(frozen=True)
-class Settings:
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="PHI_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        frozen=True,
+    )
+
     base_url: str
-    api_key: str
+    api_key: SecretStr
     default_model: str
-    request_timeout_seconds: float
+    request_timeout_seconds: float = 180.0
 
 
 def load_settings() -> Settings:
-    base_url = os.environ.get("PHI_BASE_URL")
-    api_key = os.environ.get("PHI_API_KEY")
-    default_model = os.environ.get("PHI_DEFAULT_MODEL")
-    if not base_url or not api_key or not default_model:
+    """`Settings()` with a course-friendly error instead of a raw ValidationError."""
+    try:
+        return Settings()
+    except ValidationError as exc:
         raise RuntimeError(
             "missing PHI_BASE_URL, PHI_API_KEY, or PHI_DEFAULT_MODEL -- copy .env.example to "
             ".env and fill in your course credentials"
-        )
-    timeout = float(os.environ.get("PHI_REQUEST_TIMEOUT_SECONDS", "180"))
-    return Settings(
-        base_url=base_url,
-        api_key=api_key,
-        default_model=default_model,
-        request_timeout_seconds=timeout,
-    )
+        ) from exc
